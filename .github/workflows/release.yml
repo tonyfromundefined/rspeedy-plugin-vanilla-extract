@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn typecheck
+      - run: yarn build
+      - name: Open or update version pull request
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: yarn changeset version
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Check whether this version needs publishing
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        id: check
+        shell: bash
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "Version $version is already published."
+          elif npm view "$name" version --registry=https://registry.npmjs.org/ >/dev/null 2>&1; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Initial manual publish and npm trusted publisher setup are pending."
+          fi
+      - name: Publish to npm
+        if: steps.check.outputs.publish == 'true'
+        run: npm publish --access public
